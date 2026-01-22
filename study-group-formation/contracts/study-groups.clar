@@ -284,3 +284,150 @@
     false
   )
 )
+
+;; #[allow(unchecked_data)]
+(define-public (rate-member 
+  (group-id uint)
+  (rated-member principal)
+  (rating uint))
+  (let
+    (
+      (rater tx-sender)
+      (rater-membership (unwrap! (map-get? group-members { group-id: group-id, member: rater }) err-not-member))
+      (rated-membership (unwrap! (map-get? group-members { group-id: group-id, member: rated-member }) err-not-member))
+      (existing-rating (map-get? member-ratings { group-id: group-id, rater: rater, rated: rated-member }))
+    )
+    (asserts! (get active rater-membership) err-not-member)
+    (asserts! (get active rated-membership) err-not-member)
+    (asserts! (and (>= rating u1) (<= rating u5)) err-invalid-rating)
+    (asserts! (is-none existing-rating) err-already-rated)
+    (map-set member-ratings 
+      { group-id: group-id, rater: rater, rated: rated-member }
+      {
+        rating: rating,
+        timestamp: stacks-block-height
+      }
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (add-resource 
+  (group-id uint)
+  (resource-id uint)
+  (title (string-ascii 100))
+  (url (string-ascii 200)))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+    )
+    (asserts! (get active membership) err-not-member)
+    (asserts! (get active group) err-unauthorized)
+    (map-set group-resources 
+      { group-id: group-id, resource-id: resource-id }
+      {
+        title: title,
+        url: url,
+        added-by: tx-sender,
+        added-at: stacks-block-height
+      }
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (promote-to-leader (group-id uint) (member principal))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: member }) err-not-member))
+    )
+    (asserts! (is-eq tx-sender (get creator group)) err-unauthorized)
+    (asserts! (get active membership) err-not-member)
+    (map-set group-members 
+      { group-id: group-id, member: member }
+      (merge membership { role: "leader" })
+    )
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (update-group-name (group-id uint) (new-name (string-ascii 100)))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+    )
+    (asserts! (is-eq (get role membership) "leader") err-unauthorized)
+    (map-set study-groups group-id (merge group { name: new-name }))
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (update-max-members (group-id uint) (new-max uint))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+    )
+    (asserts! (is-eq (get role membership) "leader") err-unauthorized)
+    (asserts! (>= new-max (get current-members group)) err-invalid-input)
+    (map-set study-groups group-id (merge group { max-members: new-max }))
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (reopen-group (group-id uint))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+    )
+    (asserts! (is-eq tx-sender (get creator group)) err-unauthorized)
+    (asserts! (not (get active group)) err-invalid-input)
+    (map-set study-groups group-id (merge group { active: true }))
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (kick-member (group-id uint) (member principal))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+      (leader-membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+      (member-membership (unwrap! (map-get? group-members { group-id: group-id, member: member }) err-not-member))
+    )
+    (asserts! (is-eq (get role leader-membership) "leader") err-unauthorized)
+    (asserts! (not (is-eq (get role member-membership) "leader")) err-unauthorized)
+    (asserts! (get active member-membership) err-not-member)
+    (map-set group-members 
+      { group-id: group-id, member: member }
+      (merge member-membership { active: false })
+    )
+    (map-set study-groups group-id
+      (merge group { current-members: (- (get current-members group) u1) })
+    )
+    (ok true)
+  )
+)
+
+(define-read-only (get-member-rating (group-id uint) (rater principal) (rated principal))
+  (map-get? member-ratings { group-id: group-id, rater: rater, rated: rated })
+)
+
+(define-read-only (get-resource (group-id uint) (resource-id uint))
+  (map-get? group-resources { group-id: group-id, resource-id: resource-id })
+)
+
+(define-read-only (is-group-leader (group-id uint) (member principal))
+  (match (map-get? group-members { group-id: group-id, member: member })
+    membership (is-eq (get role membership) "leader")
+    false
+  )
+)
