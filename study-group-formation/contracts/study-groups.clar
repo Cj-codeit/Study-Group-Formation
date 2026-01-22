@@ -209,3 +209,78 @@
     (ok true)
   )
 )
+
+;; #[allow(unchecked_data)]
+(define-public (create-session 
+  (group-id uint)
+  (session-name (string-ascii 100))
+  (date uint)
+  (duration uint))
+  (let
+    (
+      (group (unwrap! (map-get? study-groups group-id) err-not-found))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+      (session-id (var-get session-nonce))
+    )
+    (asserts! (is-eq (get role membership) "leader") err-unauthorized)
+    (asserts! (get active group) err-unauthorized)
+    (map-set study-sessions session-id
+      {
+        group-id: group-id,
+        session-name: session-name,
+        date: date,
+        duration: duration,
+        completed: false
+      }
+    )
+    (var-set session-nonce (+ session-id u1))
+    (ok session-id)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (mark-attendance (session-id uint))
+  (let
+    (
+      (session (unwrap! (map-get? study-sessions session-id) err-session-not-found))
+      (group-id (get group-id session))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+    )
+    (asserts! (get active membership) err-not-member)
+    (map-set session-attendance { session-id: session-id, member: tx-sender } true)
+    (ok true)
+  )
+)
+
+;; #[allow(unchecked_data)]
+(define-public (complete-session (session-id uint))
+  (let
+    (
+      (session (unwrap! (map-get? study-sessions session-id) err-session-not-found))
+      (group-id (get group-id session))
+      (membership (unwrap! (map-get? group-members { group-id: group-id, member: tx-sender }) err-not-member))
+    )
+    (asserts! (is-eq (get role membership) "leader") err-unauthorized)
+    (map-set study-sessions session-id (merge session { completed: true }))
+    (ok true)
+  )
+)
+
+(define-read-only (get-session (session-id uint))
+  (map-get? study-sessions session-id)
+)
+
+(define-read-only (get-attendance (session-id uint) (member principal))
+  (default-to false (map-get? session-attendance { session-id: session-id, member: member }))
+)
+
+(define-read-only (get-session-nonce)
+  (var-get session-nonce)
+)
+
+(define-read-only (is-session-completed (session-id uint))
+  (match (map-get? study-sessions session-id)
+    session (get completed session)
+    false
+  )
+)
